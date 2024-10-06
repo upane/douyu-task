@@ -1,19 +1,21 @@
 package ws
 
 import (
+	"crypto/tls"
 	"fmt"
+	"net/http"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 
-	"github.com/starudream/go-lib/codec/json"
-	"github.com/starudream/go-lib/log"
-	"github.com/starudream/go-lib/seq"
+	"github.com/starudream/go-lib/core/v2/codec/json"
+	"github.com/starudream/go-lib/core/v2/slog"
 
 	"github.com/starudream/douyu-task/consts"
 	"github.com/starudream/douyu-task/internal/cryptox"
+	"github.com/starudream/douyu-task/internal/uuid"
 )
 
 const (
@@ -38,12 +40,21 @@ type LoginParams struct {
 	Username string
 }
 
+var dialer = &websocket.Dialer{
+	Proxy: http.ProxyFromEnvironment,
+	TLSClientConfig: &tls.Config{
+		CipherSuites: tlsCipherSuites,
+		MinVersion:   tls.VersionTLS10,
+	},
+	HandshakeTimeout: 10 * time.Second,
+}
+
 func Login(p LoginParams) error {
 	if p.Room <= 0 {
 		p.Room = consts.RoomYYF
 	}
 
-	conn, _, err := websocket.DefaultDialer.Dial(URL, nil)
+	conn, _, err := dialer.Dial(URL, nil)
 	if err != nil {
 		return err
 	}
@@ -68,7 +79,7 @@ func Login(p LoginParams) error {
 }
 
 func (c *Client) login(p LoginParams) error {
-	devId := seq.UUIDShort()
+	devId := uuid.UUID()
 	rt := strconv.FormatInt(time.Now().Unix(), 10)
 	vk := cryptox.MD5Hex(rt + consts.WSLoginHash + devId)
 
@@ -85,7 +96,7 @@ func (c *Client) login(p LoginParams) error {
 		case msg := <-c.msg:
 			if v, ok := msg["type"]; ok && v == "loginres" {
 				if msg["username"] == p.Username {
-					log.Info().Msgf("[websocket] login success: %s", json.MustMarshal(msg))
+					slog.Info("[websocket] login success: %s", json.MustMarshal(msg))
 					return nil
 				} else {
 					return fmt.Errorf("secret keys maybe expired")
@@ -111,9 +122,9 @@ func (c *Client) write(kv ...string) {
 	defer c.wMu.Unlock()
 	err := c.conn.WriteMessage(websocket.BinaryMessage, Encode(kv...))
 	if err != nil {
-		log.Debug().Msgf("[websocket] write message error: %s", err)
+		slog.Debug("[websocket] write message error: %s", err)
 	} else {
-		log.Debug().Msgf("[websocket] write message: %s", json.MustMarshal(msg))
+		slog.Debug("[websocket] write message: %s", json.MustMarshal(msg))
 	}
 }
 
@@ -125,11 +136,11 @@ func (c *Client) listen() {
 	for {
 		_, bs, err := c.conn.ReadMessage()
 		if err != nil {
-			log.Debug().Msgf("[websocket] read message error: %s", err)
+			slog.Debug("[websocket] read message error: %s", err)
 			break
 		}
 		msg := Decode(bs)
-		log.Debug().Msgf("[websocket] read message: %s", json.MustMarshal(msg))
+		slog.Debug("[websocket] read message: %s", json.MustMarshal(msg))
 		c.msg <- msg
 	}
 }
